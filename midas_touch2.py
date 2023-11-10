@@ -1,9 +1,11 @@
 import os
 import math
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import MetaTrader5 as mt5
+from urllib import request
+import json
 
 def tick_rule(price):
     price = int(price)
@@ -46,26 +48,36 @@ def save_df_to_csv(df, folder_name='No folder name specified', file_name='No fil
         df.to_csv(file_path, index=False)
     print(f"Data {'appended to' if append else 'saved in'} {file_path}")
 
-def download_stocks(symbols, n_dfPoint=200, timeframe=mt5.TIMEFRAME_D1):
-    dfs = []  # List to hold individual dataframes
-    if not mt5.initialize():
-        print("initialize() failed, error code =",mt5.last_error())
-        return None
+def get_api_data(symbol, end_date, period, num_days, api_token):
+    base_url = "https://eodhd.com/api/eod/"
+    period_in_days = 1 if period == 'd' else 0
+    start_date = datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=num_days * period_in_days)
+    start_date = start_date.strftime("%Y-%m-%d")
+    url = f"{base_url}{symbol}?from={start_date}&to={end_date}&period={period}&fmt=json&api_token={api_token}"
+    try:
+        with request.urlopen(url) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                return data[-num_days:]
+            else:
+                return f"Error: Unable to fetch data, status code {response.status}"
+    except Exception as e:
+        return f"Error: {e}"
+    
+def download_stocks(symbols, period, api_token, num_days=20):
+    dfs = []
     for symbol in symbols:
-        # Fetch the data using MT5 API
-        data = mt5.copy_rates_from_pos(symbol, timeframe, 1, n_dfPoint)
-        # Convert the data into a DataFrame
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        data = get_api_data(symbol, end_date, period, num_days, api_token)
         df = pd.DataFrame(data)
-        df['time'] = pd.to_datetime(df['time'], unit='s')
+        df.rename(columns={'date': 'time'}, inplace=True)
         df.set_index('time', inplace=True)
-        # Rename the 'close' column to the stock symbol and append to the dfs list
-        dfs.append(df[['close']].rename(columns={'close': symbol}))
+        dfs.append(df[['adjusted_close']].rename(columns={'adjusted_close': symbol}))
     final_df = pd.concat(dfs, axis=1)
     return final_df
 
-def run_portfolio(prices, commission_rate=0.001):
-    # Calculate Alpha1
-    alpha1 = -(prices - prices.shift(5)) / prices.shift(5)
+def run_portfolio(prices, alpha_n=datetime.now().microsecond % 10 + 1, commission_rate=0.001):
+    alpha1 = -(prices - prices.shift(alpha_n)) / prices.shift(alpha_n)
     alpha1 = alpha1.dropna() 
     weights = alpha1.div(alpha1.abs().sum(axis=1), axis=0)
     weights[weights < 0] = 0
@@ -154,7 +166,6 @@ def round_to_tick(price):
     rounded_price = round(rounded_ticks * tick, tick_decimal_point)
     return rounded_price
 
-
 ##########################################first execution#############################################
 def execute_mt5_order(symbol, execute_price, order_type, volume, sl, tp, deviation,magic_number=8888,comment_msg='say something'):
     if not mt5.initialize():
@@ -227,7 +238,6 @@ def execute_trades_from_data(allocation_df):
     return order_ids
 ##########################################first execution#############################################
 
-
 ##########################################second execution#############################################
 def check_order_status(order_id):
     order_info = mt5.orders_get(ticket=order_id)
@@ -292,4 +302,36 @@ def delete_and_resubmit_orders(orders_details_list):
             else:
                 print("Failed to place a new order, error code =", mt5.last_error())
     return resubmitted_orders
+
+def delete_orders(orders_details_list):
+    deleted_volumes = []
+    for order_details in orders_details_list:
+        if order_details is not None:
+            symbol_info = mt5.symbol_info(order_details['symbol'])
+            if symbol_info is None:
+                print("Failed to get symbol info, error code =", mt5.last_error())
+                continue
+            symbol = order_details['symbol']
+            order_id = order_details['ticket']
+            direction = order_details['type']
+            volume_initial = order_details['volume_initial']
+            volume_current = order_details['volume_current']
+            volume_filled = volume_initial - volume_current
+            delete_result = mt5.order_send({
+                "action": mt5.TRADE_ACTION_REMOVE,
+                "order": order_id
+            })
+            if not (delete_result and delete_result.retcode == mt5.TRADE_RETCODE_DONE):
+                print(f"Failed to cancel order {order_id}, error code =", mt5.last_error())
+            else:
+                print(f"Order {order_id} canceled successfully.")
+                # Record specific details of the deleted volume for the symbol
+                deleted_info = {
+                    'symbol': symbol,
+                    'volume_filled': volume_filled,
+                    'direction': direction
+                }
+                deleted_volumes.append(deleted_info)
+    return deleted_volumes
+
 ##########################################second execution#############################################

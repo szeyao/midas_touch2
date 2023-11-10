@@ -1,68 +1,106 @@
-import os
 import midas_touch2 as mt2
-import pandas as pd
-import numpy as np
 import MetaTrader5 as mt5
+import json
+import pandas as pd
 import warnings
 import asyncio
-import time
+import os
 warnings.filterwarnings('ignore')
-
 if not mt5.initialize():
     print("initialize() failed")
 else:
     print("MT5 successfully initialised.\n")
 
-symbols = ['AXREIT', 'MAXIS', 'ABMB', 'LYSAGHT', 'HARBOUR', 
-        'DIALOG', 'SHL', 'YOCB', 'VSTECS', 'GASMSIA', 
-        'AHEALTH', 'SWKPLNT', 'IJM']
+current_path = os.path.abspath(__file__)
+current_dir = os.path.dirname(current_path)
+config_file_name = 'config.json'
+config_file_path = os.path.join(current_dir, config_file_name)
+with open(config_file_path, 'r') as config_file:
+        config = json.load(config_file)
 
-price_df = mt2.download_stocks(symbols)
+symbols = config['symbols']
+api_token = config['api_token']
+symbols = [symbol + "SE" for symbol in symbols]
+price_df = mt2.download_stocks(symbols, "d", api_token, num_days=20)
+price_df = pd.DataFrame(price_df)
 weights_df, latest_weights = mt2.run_portfolio(price_df)
+print(weights_df)
+##############################Dummy weights##############################
+# import random
+# import pandas as pd
+# def generate_random_series(tickers, seed=None):
+#     if seed is not None:
+#         random.seed(seed)
+#     random_values = [random.random() for _ in tickers]
+#     total = sum(random_values)
+#     normalized_values = [value / total for value in random_values]
+#     return pd.Series(normalized_values, index=tickers)
+# latest_weights = generate_random_series(symbols)
+#########################################################################
 
-#check folder
+
+total_investment = 100000
 previous_allocation_df = mt2.get_folder(folder_name='daily_allocation')
 previous_portfolio_df = mt2.get_folder(folder_name='daily_portfolio')
 if previous_allocation_df is not None and previous_portfolio_df is not None:
     # Process the existing CSV data
+    prev_holding = previous_allocation_df['Holding Units']
+    prev_entry = previous_allocation_df['Entry Units']
+    prev_exit = previous_allocation_df['Exit Units']
     total_investment = abs(previous_portfolio_df['Total Value'].iloc[-1])
     allocation_df = mt2.calculate_stock_allocation(total_investment, latest_weights, price_df)
-    allocation_df['Holding Units'] = previous_allocation_df['Allocated Units']
-
+    allocation_df['Holding Units'] = prev_holding + prev_entry - prev_exit
 else: #first run
-    total_investment = 100000 #TRY 15K 10K 5K
     allocation_df = mt2.calculate_stock_allocation(total_investment, latest_weights, price_df)
     # Handle the initial run scenario
     print("This is the initial run. No previous allocation data available.")
     allocation_df['Holding Units'] = 0
 
+
 # Calculate Entry and Exit Units
 allocation_df['Entry Units'] = allocation_df.apply(
-    lambda row: max(row['Allocated Units'] - row['Holding Units'], 0), axis=1
-)
+    lambda row: max(row['Allocated Units'] - row['Holding Units'], 0), axis=1)
 allocation_df['Exit Units'] = allocation_df.apply(
-    lambda row: max(row['Holding Units'] - row['Allocated Units'], 0), axis=1
-)
+    lambda row: max(row['Holding Units'] - row['Allocated Units'], 0), axis=1)
 numeric_cols = allocation_df.select_dtypes(include=['number']).astype(float)
-
 for col in numeric_cols.columns:
     allocation_df[col] = numeric_cols[col]
 
-#async start here
-async def execute_and_monitor(allocation_df, timeout=60):
-    print(allocation_df)
+async def execute_and_check_trades(allocation_df):
     order_ids = mt2.execute_trades_from_data(allocation_df)
-    print(f'Waiting for {timeout/60} minutes..')
-    await asyncio.sleep(timeout)
-    orders_list = [mt2.check_order_status(order_id) for order_id in order_ids] 
-    print(f'orders_list: {orders_list}')
-    resubmitted_orders = mt2.delete_and_resubmit_orders(orders_list) 
-    print(f'resubmitted_orders: {resubmitted_orders}')
-    return orders_list, resubmitted_orders  
-orders_list, resubmitted_orders = asyncio.run(execute_and_monitor(allocation_df, timeout=90))
+    await asyncio.sleep(20)  # Asynchronous sleep
+    orders_list = [mt2.check_order_status(order_id) for order_id in order_ids]
+    #orders_list = [await mt2.check_order_status(order_id) for order_id in order_ids]
+    deleted_volumes = mt2.delete_orders(orders_list)
+    return orders_list, deleted_volumes
+orders_list, deleted_volumes = asyncio.run(execute_and_check_trades(allocation_df))
 
-for order in resubmitted_orders:
+for order in deleted_volumes:
     symbol = order['symbol']
-    price = order['price'] 
-    allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Share Price'] = price
-allocation_df
+    volume_filled = order['volume_filled']
+    if order['direction'] == mt5.ORDER_TYPE_BUY_LIMIT:
+        allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Entry Units'] = volume_filled
+    else: 
+        allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Exit Units'] = volume_filled
+
+entry_unit = allocation_df['Entry Units']
+exit_unit = allocation_df['Exit Units']
+share_price = allocation_df['Share Price']
+allocated_unit = allocation_df['Allocated Units']
+if previous_allocation_df is not None and previous_portfolio_df is not None: #2nd run onwards
+    starting_cash = previous_portfolio_df['Cash Value'].iloc[-1]
+    current_share_value = ((entry_unit*share_price)-(exit_unit*share_price)).sum()
+    current_share_value += previous_portfolio_df['Portfolio Value'].iloc[-1]
+else: #first run
+    starting_cash = total_investment
+    current_share_value = (entry_unit*share_price).sum()
+
+portfolio_df = mt2.compile_portfolio_data(allocation_df, starting_cash, current_share_value)
+
+mt2.save_df_to_csv(portfolio_df, 
+                   folder_name='daily_portfolio', 
+                   file_name='balance',
+                   append=True)
+mt2.save_df_to_csv(allocation_df, 
+                   folder_name='daily_allocation', 
+                   file_name='allocation')
