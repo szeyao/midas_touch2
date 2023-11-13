@@ -88,10 +88,14 @@ def run_portfolio(prices, alpha_n=datetime.now().microsecond % 10 + 1, commissio
     portfolio_returns = portfolio_returns - commission_rate
     return weights, latest_weights
 
+
 def calculate_stock_allocation(total_investment, weights_series, price_df, min_order_size=100):
     latest_prices = price_df.iloc[-1]
     allocated_money = weights_series * total_investment
     max_units_raw = allocated_money / latest_prices
+    if not np.isfinite(max_units_raw).all():
+        print("Non-finite values found in max_units_raw. Handling...")
+    max_units_raw[~np.isfinite(max_units_raw)] = 0 #infinites are set to 0
     max_units = np.floor(max_units_raw / min_order_size) * min_order_size
     max_units = max_units.astype(int)
     allocated_money = latest_prices * max_units
