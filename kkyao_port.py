@@ -5,6 +5,7 @@ import pandas as pd
 import warnings
 import asyncio
 import os
+import stock_mapping as sm
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
     print("initialize() failed")
@@ -20,30 +21,31 @@ with open(config_file_path, 'r') as config_file:
 
 symbols = config['symbols']
 api_token = config['api_token']
+mapping_file = config['mapping_file_path']
+sleep_time = config['sleep_time']
+account=config['execute_account']
+password=config['password']
+server=config['server']
+starting_cash = config['starting_cash']
+
+authorized=mt5.login(account, password=password, server=server)
+if authorized:
+    print(mt5.account_info())
+else:
+    print("failed to connect at account #{}, error code: {}".format(account, mt5.last_error()))
+
+mt5_symbol = sm.get_ticker_list(symbols, file_path=mapping_file)
 symbols = [symbol + "SE" for symbol in symbols]
 price_df = mt2.download_stocks(symbols, "d", api_token, num_days=20)
 price_df = pd.DataFrame(price_df)
-weights_df, latest_weights = mt2.run_portfolio(price_df)
-print(weights_df)
-##############################Dummy weights##############################
-# import random
-# import pandas as pd
-# def generate_random_series(tickers, seed=None):
-#     if seed is not None:
-#         random.seed(seed)
-#     random_values = [random.random() for _ in tickers]
-#     total = sum(random_values)
-#     normalized_values = [value / total for value in random_values]
-#     return pd.Series(normalized_values, index=tickers)
-# latest_weights = generate_random_series(symbols)
-#########################################################################
-
-
-total_investment = 100000
+price_df.columns = mt5_symbol
+weights_df, latest_weights = mt2.run_portfolio(price_df, alpha_n=5)
+print(f'latest_weights: {latest_weights}')
+#ADD DUMMY WEIGHTS HERE TO TEST
+total_investment = starting_cash
 previous_allocation_df = mt2.get_folder(folder_name='daily_allocation')
 previous_portfolio_df = mt2.get_folder(folder_name='daily_portfolio')
 if previous_allocation_df is not None and previous_portfolio_df is not None:
-    # Process the existing CSV data
     prev_holding = previous_allocation_df['Holding Units']
     prev_entry = previous_allocation_df['Entry Units']
     prev_exit = previous_allocation_df['Exit Units']
@@ -52,10 +54,8 @@ if previous_allocation_df is not None and previous_portfolio_df is not None:
     allocation_df['Holding Units'] = prev_holding + prev_entry - prev_exit
 else: #first run
     allocation_df = mt2.calculate_stock_allocation(total_investment, latest_weights, price_df)
-    # Handle the initial run scenario
     print("This is the initial run. No previous allocation data available.")
     allocation_df['Holding Units'] = 0
-
 
 # Calculate Entry and Exit Units
 allocation_df['Entry Units'] = allocation_df.apply(
@@ -66,14 +66,13 @@ numeric_cols = allocation_df.select_dtypes(include=['number']).astype(float)
 for col in numeric_cols.columns:
     allocation_df[col] = numeric_cols[col]
 
-async def execute_and_check_trades(allocation_df):
+async def execute_and_check_trades(allocation_df, time):
     order_ids = mt2.execute_trades_from_data(allocation_df)
-    await asyncio.sleep(20)  # Asynchronous sleep
+    await asyncio.sleep(time)  # Asynchronous sleep
     orders_list = [mt2.check_order_status(order_id) for order_id in order_ids]
-    #orders_list = [await mt2.check_order_status(order_id) for order_id in order_ids]
     deleted_volumes = mt2.delete_orders(orders_list)
     return orders_list, deleted_volumes
-orders_list, deleted_volumes = asyncio.run(execute_and_check_trades(allocation_df))
+orders_list, deleted_volumes = asyncio.run(execute_and_check_trades(allocation_df, sleep_time))
 
 for order in deleted_volumes:
     symbol = order['symbol']

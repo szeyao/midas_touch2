@@ -63,18 +63,29 @@ def get_api_data(symbol, end_date, period, num_days, api_token):
                 return f"Error: Unable to fetch data, status code {response.status}"
     except Exception as e:
         return f"Error: {e}"
-    
+
 def download_stocks(symbols, period, api_token, num_days=20):
     dfs = []
     for symbol in symbols:
         end_date = datetime.now().strftime("%Y-%m-%d")
         data = get_api_data(symbol, end_date, period, num_days, api_token)
-        df = pd.DataFrame(data)
-        df.rename(columns={'date': 'time'}, inplace=True)
-        df.set_index('time', inplace=True)
-        dfs.append(df[['adjusted_close']].rename(columns={'adjusted_close': symbol}))
-    final_df = pd.concat(dfs, axis=1)
-    return final_df
+        if isinstance(data, str) and "Error" in data:
+            print(f"Failed to fetch data for {symbol}: {data}")
+        else:
+            try:
+                df = pd.DataFrame(data)
+                df.rename(columns={'date': 'time'}, inplace=True)  # Correctly rename 'date' to 'time'
+                df.set_index('time', inplace=True)
+                dfs.append(df[['adjusted_close']].rename(columns={'adjusted_close': symbol}))
+            except KeyError as e:
+                print(f"KeyError for {symbol}: {e}")
+                continue
+    if dfs:
+        final_df = pd.concat(dfs, axis=1)
+        return final_df
+    else:
+        return "No data fetched for any symbols."
+
 
 def run_portfolio(prices, alpha_n=datetime.now().microsecond % 10 + 1, commission_rate=0.001):
     alpha1 = -(prices - prices.shift(alpha_n)) / prices.shift(alpha_n)
@@ -87,7 +98,6 @@ def run_portfolio(prices, alpha_n=datetime.now().microsecond % 10 + 1, commissio
     portfolio_returns = (weights.shift() * prices.pct_change()).sum(axis=1)
     portfolio_returns = portfolio_returns - commission_rate
     return weights, latest_weights
-
 
 def calculate_stock_allocation(total_investment, weights_series, price_df, min_order_size=100):
     latest_prices = price_df.iloc[-1]
@@ -224,7 +234,7 @@ def execute_trades_from_data(allocation_df):
                                        sl=0.0, tp=0.0, 
                                        deviation=10, 
                                        magic_number=8888, 
-                                       comment_msg='First entry')
+                                       comment_msg='Entry')
             if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
                 order_ids.append(result.order)
         if exit_units > 0:
@@ -236,7 +246,7 @@ def execute_trades_from_data(allocation_df):
                                        sl=0.0, tp=0.0, 
                                        deviation=10, 
                                        magic_number=8888, 
-                                       comment_msg='First exit')
+                                       comment_msg='Exit')
             if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
                 order_ids.append(result.order)
     return order_ids
@@ -339,3 +349,15 @@ def delete_orders(orders_details_list):
     return deleted_volumes
 
 ##########################################second execution#############################################
+##############################Dummy weights##############################
+# import random
+# import pandas as pd
+# def generate_random_series(tickers, seed=None):
+#     if seed is not None:
+#         random.seed(seed)
+#     random_values = [random.random() for _ in tickers]
+#     total = sum(random_values)
+#     normalized_values = [value / total for value in random_values]
+#     return pd.Series(normalized_values, index=tickers)
+# latest_weights = generate_random_series(mt5_symbol)
+#########################################################################
