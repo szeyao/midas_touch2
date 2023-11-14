@@ -1,10 +1,10 @@
-import midas_touch2 as mt2
-import MetaTrader5 as mt5
-import json
-import pandas as pd
-import warnings
-import asyncio
 import os
+import json
+import asyncio
+import warnings
+import pandas as pd
+import MetaTrader5 as mt5
+import midas_touch2 as mt2
 import stock_mapping as sm
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
@@ -27,7 +27,6 @@ account=config['execute_account']
 password=config['password']
 server=config['server']
 starting_cash = config['starting_cash']
-
 authorized=mt5.login(account, password=password, server=server)
 if authorized:
     print(mt5.account_info())
@@ -95,7 +94,6 @@ else: #first run
     current_share_value = (entry_unit*share_price).sum()
 
 portfolio_df = mt2.compile_portfolio_data(allocation_df, starting_cash, current_share_value)
-
 mt2.save_df_to_csv(portfolio_df, 
                    folder_name='daily_portfolio', 
                    file_name='balance',

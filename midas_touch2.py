@@ -1,11 +1,11 @@
 import os
 import math
-import pandas as pd
-from datetime import datetime, timedelta
+import json
 import numpy as np
+import pandas as pd
 import MetaTrader5 as mt5
 from urllib import request
-import json
+from datetime import datetime, timedelta
 
 def tick_rule(price):
     price = int(price)
@@ -86,7 +86,6 @@ def download_stocks(symbols, period, api_token, num_days=20):
     else:
         return "No data fetched for any symbols."
 
-
 def run_portfolio(prices, alpha_n=datetime.now().microsecond % 10 + 1, commission_rate=0.001):
     alpha1 = -(prices - prices.shift(alpha_n)) / prices.shift(alpha_n)
     alpha1 = alpha1.dropna() 
@@ -160,7 +159,7 @@ def get_folder(folder_name='daily_allocation'):
         return pd.read_csv(latest_csv_path)
     else:
         return None
-    
+
 def get_open_positions(ticker):
     positions = mt5.positions_get(symbol=ticker)
     if positions is None or len(positions) == 0:
@@ -347,8 +346,8 @@ def delete_orders(orders_details_list):
                 }
                 deleted_volumes.append(deleted_info)
     return deleted_volumes
-
 ##########################################second execution#############################################
+
 ##############################Dummy weights##############################
 # import random
 # import pandas as pd
