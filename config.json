@@ -1,12 +1,12 @@
 {
-    "symbols": ["3336.KL", "4324.KL", "4588.KL", "4677.KL", "5012.KL", "5307.KL",
-                "6459.KL", "6521.KL", "6947.KL", "7153.KL", "7204.KL", "7229.KL",
-                "7249.KL"],  
-    "api_token": "x.x",
+    "symbols": ["1066.KL","1155.KL","3158.KL","5878.KL",
+                "6012.KL","6947.KL","7084.KL","7103.KL"],  
+    "api_token": "x",
     "mapping_file_path" : "C:/Users/jeffnsy/Desktop/Python codes/midas_touch2/stock_mapping.xlsx",
-    "sleep_time": 25200,
+    "sleep_time": 3000,
     "execute_account": 2117,
     "password": "kenanga2117",
     "server": "172.21.139.37:443",
-    "starting_cash": 130000
+    "starting_cash": 20000,
+    "VaR": 0.04
 }

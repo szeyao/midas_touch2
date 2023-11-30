@@ -15,7 +15,7 @@ def find_opposite(input_list, symbol_map):
             for symbol, name in symbol_map.items():
                 if name == item:
                     results.append(symbol)  
-                    break  
+                    break
             else:
                 results.append("Not Found")
     return results

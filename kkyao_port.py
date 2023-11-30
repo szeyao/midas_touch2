@@ -1,11 +1,14 @@
 import os
 import json
+import time
+import datetime
 import asyncio
 import warnings
 import pandas as pd
 import MetaTrader5 as mt5
 import midas_touch2 as mt2
 import stock_mapping as sm
+
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
     print("initialize() failed")
@@ -26,6 +29,7 @@ sleep_time = config['sleep_time']
 account=config['execute_account']
 password=config['password']
 server=config['server']
+VaR = config['VaR']
 starting_cash = config['starting_cash']
 authorized=mt5.login(account, password=password, server=server)
 if authorized:
@@ -101,3 +105,22 @@ mt2.save_df_to_csv(portfolio_df,
 mt2.save_df_to_csv(allocation_df, 
                    folder_name='daily_allocation', 
                    file_name='allocation')
+
+start_time = datetime.time(9, 00)
+end_time = datetime.time(16, 30)
+while True:
+    current_time = datetime.datetime.now().time()
+    if start_time <= current_time <= end_time:
+        total_portfolio_change_position, total_portfolio_change_today = mt2.monitor_portfolio(mt5_symbol, latest_weights)
+        today_return = max(total_portfolio_change_position, total_portfolio_change_today)
+        if today_return <= -VaR:
+            print("Stop loss!!!")
+        elif today_return >= VaR:
+            print("Take profit!!!")
+        else:
+            print("Portfolio within risk limits.")
+        print('Checked, sleeping for 5 seconds...')
+        time.sleep(5) 
+    else:
+        print("Outside monitoring hours.")
+        break
