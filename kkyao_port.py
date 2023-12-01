@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import twap
 import datetime
 import asyncio
 import warnings
@@ -107,12 +108,12 @@ mt2.save_df_to_csv(allocation_df,
                    file_name='allocation')
 
 start_time = datetime.time(9, 00)
-end_time = datetime.time(16, 30)
+end_time = datetime.time(16, 40)
 while True:
     current_time = datetime.datetime.now().time()
     if start_time <= current_time <= end_time:
-        total_portfolio_change_position, total_portfolio_change_today = mt2.monitor_portfolio(mt5_symbol, latest_weights)
-        today_return = max(total_portfolio_change_position, total_portfolio_change_today)
+        total_portfolio_change_position = mt2.monitor_portfolio(mt5_symbol, latest_weights)
+        today_return = total_portfolio_change_position
         if today_return <= -VaR:
             print("Stop loss!!!")
         elif today_return >= VaR:

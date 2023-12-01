@@ -371,34 +371,26 @@ def monitor_portfolio(stock_symbols, weights):
         print("initialize() failed, error code =", mt5.last_error())
         return
     all_positions = []
-    open_prices = {}
+    
     for symbol in stock_symbols:
         positions = mt5.positions_get(symbol=symbol)
-        today_open_price = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 1)
         if positions is None:
             print(f"No positions for {symbol}, error code={mt5.last_error()}")
         elif len(positions) > 0:
             all_positions.extend(list(positions))
-            open_prices[symbol] = today_open_price[0]['open']
     if all_positions:
         df = pd.DataFrame(all_positions, columns=all_positions[0]._asdict().keys())
         df['time'] = pd.to_datetime(df['time'], unit='s')
         df = df.drop(['time_msc', 'time_update', 'time_update_msc', 'identifier', 'reason', 
                       'sl', 'tp', 'swap', 'comment', 'external_id'], axis=1)
-        df['today_open'] = df['symbol'].map(open_prices)
-        df['today_change'] = (df['price_current'] / df['today_open']) - 1
         df['position_change'] = (df['price_current'] / df['price_open']) - 1
         df['value'] = df['volume'] * df['price_open']
         df['weights'] = df['symbol'].map(weights)
         df['portfolio_change_position'] = df['weights'] * df['position_change']
-        df['portfolio_change_today'] = df['weights'] * df['today_change']
-        print(df)
+        #print(df)
     else:
         print("No open positions for any of the specified symbols.")
-
     mt5.shutdown()
     total_portfolio_change_position = df['portfolio_change_position'].sum()
-    total_portfolio_change_today = df['portfolio_change_today'].sum()
     print(f"Total portfolio change position: {total_portfolio_change_position:.4%}")
-    print(f"Total portfolio change today: {total_portfolio_change_today:.4%}")
-    return total_portfolio_change_position, total_portfolio_change_today
+    return total_portfolio_change_position
