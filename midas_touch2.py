@@ -2,8 +2,10 @@ import os
 import math
 import json
 import time
+import twap
 import numpy as np
 import pandas as pd
+import concurrent.futures
 import MetaTrader5 as mt5
 import stock_mapping as sm
 from urllib import request
@@ -184,76 +186,49 @@ def round_to_tick(price):
     return rounded_price
 
 ##########################################first execution#############################################
-def execute_mt5_order(symbol, execute_price, order_type, volume, sl, tp, deviation,magic_number=8888,comment_msg='say something'):
-    if not mt5.initialize():
-        print("initialize() failed, error code =", mt5.last_error())
-        return
-    if not mt5.symbol_select(symbol, True):
-        print("symbol_select() failed, symbol not found in market watch:", symbol)
-        return
-    order_type_dict = {
-        'buy': mt5.ORDER_TYPE_BUY_LIMIT,
-        'sell': mt5.ORDER_TYPE_SELL_LIMIT
-    }
-    if order_type.lower() not in order_type_dict:
-        print(f"Order type '{order_type}' is not supported.")
-        return
-
-    request = {
-        "action": mt5.TRADE_ACTION_PENDING,
-        "symbol": symbol,
-        "volume": volume,
-        "type": order_type_dict[order_type.lower()],
-        "price": execute_price,
-        "sl": sl,
-        "tp": tp,
-        "deviation": deviation,
-        "magic": magic_number,
-        "comment": comment_msg,
-        "type_time": mt5.ORDER_TIME_GTC,  
-        "type_filling": mt5.ORDER_FILLING_RETURN,  
-    }
-    result = mt5.order_send(request)
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print("Order send failed, retcode =", result.retcode)
-        print("Error message:", mt5.last_error())
-    else:
-        print("Order executed successfully, transaction ID =", result.order)
-    return result
+def place_order(row):
+    symbol = row['Share Symbol']
+    price = row['Share Price']
+    entry_units = row['Entry Units']
+    exit_units = row['Exit Units']
+    order_ids = []
+    if entry_units > 0:
+        print(f"Placing entry order for {symbol}")
+        result = twap.TWAPStrategy2(symbol=symbol, 
+                                    action="Buy", 
+                                    execPeriod=60*10, 
+                                    execMode='Qty', 
+                                    execUnits=entry_units, 
+                                    targetTWAP=price, 
+                                    slippage=0.02, 
+                                    qtyRatio=0.2, 
+                                    orderInterval=5, 
+                                    magic=6666, 
+                                    comment="TWAP Entry")
+        if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+            order_ids.append(result.order)
+    if exit_units > 0:
+        print(f"Placing exit order for {symbol}")
+        result = twap.TWAPStrategy2(symbol=symbol, 
+                                    action="Sell", 
+                                    execPeriod=60*10, 
+                                    execMode='Qty', 
+                                    execUnits=exit_units, 
+                                    targetTWAP=price, 
+                                    slippage=0.02, 
+                                    qtyRatio=0.2, 
+                                    orderInterval=5, 
+                                    magic=6666, 
+                                    comment="TWAP Exit")
+        if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+            order_ids.append(result.order)
+    return order_ids
 
 def execute_trades_from_data(allocation_df):
-    order_ids = []
-    for index, row in allocation_df.iterrows():
-        symbol = row['Share Symbol']
-        ask = mt5.symbol_info_tick(symbol).ask
-        bid = mt5.symbol_info_tick(symbol).bid
-        #price = row['Share Price']
-        entry_units = row['Entry Units']
-        exit_units = row['Exit Units']
-        if entry_units > 0:
-            print(f"Placing entry order for {symbol}")
-            result = execute_mt5_order(symbol=symbol, 
-                                       execute_price=ask,#price, 
-                                       order_type='buy', 
-                                       volume=entry_units, 
-                                       sl=0.0, tp=0.0, 
-                                       deviation=10, 
-                                       magic_number=8888, 
-                                       comment_msg='Entry')
-            if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-                order_ids.append(result.order)
-        if exit_units > 0:
-            print(f"Placing exit order for {symbol}")
-            result = execute_mt5_order(symbol=symbol, 
-                                       execute_price=bid,#price, 
-                                       order_type='sell', 
-                                       volume=exit_units, 
-                                       sl=0.0, tp=0.0, 
-                                       deviation=10, 
-                                       magic_number=8888, 
-                                       comment_msg='Exit')
-            if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-                order_ids.append(result.order)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(place_order, row) for _, row in allocation_df.iterrows()]
+        results = [future.result() for future in concurrent.futures.as_completed(futures)]
+    order_ids = [order_id for sublist in results for order_id in sublist]
     return order_ids
 ##########################################first execution#############################################
 
