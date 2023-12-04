@@ -281,7 +281,7 @@ def execute_trades_from_data(allocation_df):
         if entry_units > 0:
             print(f"Placing entry order for {symbol}")
             result = execute_mt5_order(symbol=symbol, 
-                                       execute_price=price+0.01, 
+                                       execute_price=price, 
                                        order_type='buy', 
                                        volume=entry_units, 
                                        sl=0.0, tp=0.0, 
@@ -293,7 +293,7 @@ def execute_trades_from_data(allocation_df):
         if exit_units > 0:
             print(f"Placing exit order for {symbol}")
             result = execute_mt5_order(symbol=symbol, 
-                                       execute_price=price+0.01, 
+                                       execute_price=price, 
                                        order_type='sell', 
                                        volume=exit_units,
                                        sl=0.0, tp=0.0, 
@@ -392,6 +392,9 @@ def monitor_portfolio(stock_symbols, weights):
     return total_portfolio_change_position
 
 def get_opening_orders(stock_symbols, weights):
+    if not mt5.initialize():
+        print("initialize() failed, error code =", mt5.last_error())
+        return None, pd.DataFrame()  # Return an empty DataFrame if MT5 fails to initialize
     all_positions = []
     open_prices = {}
     for symbol in stock_symbols:
@@ -413,12 +416,15 @@ def get_opening_orders(stock_symbols, weights):
         df['weights'] = df['symbol'].map(weights)
         df['portfolio_change_position'] = df['weights'] * df['position_change']
     total_portfolio_change_position = df['portfolio_change_position'].sum() if not df.empty else 0
-    print(f"Total portfolio change: {total_portfolio_change_position:.4%}")
+    print(f"Total portfolio change position: {total_portfolio_change_position:.4%}")
     return total_portfolio_change_position, df
 
-def get_filled_orders(symbol_list):
+def get_filled_orders(symbol_list, magic = 4444):
     from_date = datetime.now()
     to_date = datetime.now() + timedelta(days=1)
+
+    print(f"from_date: {from_date}")
+    print(f"to_date: {to_date}")
     all_deals = []
     for symbol in symbol_list:
         deals = mt5.history_orders_get(from_date, to_date)
@@ -437,40 +443,41 @@ def get_filled_orders(symbol_list):
                   'position_id', 'position_by_id', 'external_id', 'price_stoplimit'], axis=1)
     df = df.drop_duplicates()
     filled_orders = df[df['state'] == 4]
-    filled_orders = df[df['magic'] == 1113]
+    #filled_orders = df[df['magic'] == magic]
     filled_orders = filled_orders[filled_orders['symbol'].isin(symbol_list)]
     return filled_orders
-
-def generate_daily_log(allocation_df, initial_capital=10000, log_folder="daily_portfolio", log_file_name="balance.csv"):
+    
+def create_daily_log(filled_orders, opening_df, starting_cash=10000, log_folder="daily_portfolio", log_file_name="balance.csv"):
     log_file_path = os.path.join(log_folder, log_file_name)
-    print(f'allocation_df: {allocation_df}')
     if os.path.exists(log_folder) and os.path.isfile(log_file_path):
         previous_log = pd.read_csv(log_file_path)
-        prev_cash_balance = previous_log['Cash Balance'].iloc[-1]
-        current_portfolio_value = (allocation_df['Holding Units'] * allocation_df['Current Price']).sum()
-        initial_cap = prev_cash_balance + current_portfolio_value
-        purchase_cost = (allocation_df['Entry Units'] * allocation_df['Entry Price']).sum()
-        sale_proceed = (allocation_df['Exit Units'] * allocation_df['Exit Price']).sum()
-        cash_balance = initial_cap - purchase_cost + sale_proceed
-        portfolio_value = (allocation_df['Holding Units'] * allocation_df['Current Price']).sum()
-        total_value = cash_balance + portfolio_value
+        initial_capital = previous_log.iloc[-1]['Cash Balance']
     else:
-        initial_cap = initial_capital
-        purchase_cost = (allocation_df['Entry Units'] * allocation_df['Entry Price']).sum()
-        sale_proceed = (allocation_df['Exit Units'] * allocation_df['Exit Price']).sum()
-        cash_balance = initial_cap - purchase_cost + sale_proceed
-        portfolio_value = (allocation_df['Holding Units'] * allocation_df['Current Price']).sum()
-        total_value = cash_balance + portfolio_value
-    log_entry = pd.DataFrame({
-        'Date': [datetime.now().strftime('%Y-%m-%d')],
-        'Initial Capital': [initial_cap],
-        'Purchase Cost': [purchase_cost],
-        'Sale Proceed': [sale_proceed],
+        initial_capital = starting_cash
+    cash_balance = initial_capital
+    # Calculate purchase cost
+    buy_order = filled_orders[filled_orders['type'] == 2]
+    purchase_cost = (buy_order['price_current'] * buy_order['volume_initial']).sum()
+    cash_balance -= purchase_cost
+    # Calculate portfolio value
+    portfolio_value = (opening_df['price_current'] * opening_df['volume']).sum()
+    # Calculate sales proceeds
+    sell_order = filled_orders[filled_orders['type'] == 3]
+    sales_proceed = (sell_order['price_current'] * sell_order['volume_initial']).sum()
+    cash_balance += sales_proceed
+    # Total value
+    total_value = cash_balance + portfolio_value
+    # Create the log dataframe
+    log_df = pd.DataFrame({
+        'Date': [pd.to_datetime('today').date()],
+        'Initial Capital': [initial_capital],
         'Cash Balance': [cash_balance],
         'Portfolio Value': [portfolio_value],
+        'Purchase Cost': [purchase_cost],
+        'Sales Proceeds': [sales_proceed],
         'Total Value': [total_value]
     })
-    return log_entry
+    return log_df
 
 def close_all_positions(df, comment):
     for _, row in df.iterrows():

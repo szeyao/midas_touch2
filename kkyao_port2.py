@@ -9,6 +9,7 @@ import pandas as pd
 import MetaTrader5 as mt5
 import midas_touch2 as mt2
 import stock_mapping as sm
+
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
     print("initialize() failed")
@@ -70,11 +71,10 @@ allocation_df['Exit Units'] = allocation_df.apply(
 numeric_cols = allocation_df.select_dtypes(include=['number']).astype(float)
 for col in numeric_cols.columns:
     allocation_df[col] = numeric_cols[col]
-#print(f'first allocation: {allocation_df}')
 # LIMIT
-async def execute_and_check_trades(allocation_df, time):
+async def execute_and_check_trades(allocation_df, sleep_time): 
     order_ids = mt2.execute_trades_from_data(allocation_df)
-    await asyncio.sleep(time)
+    await asyncio.sleep(sleep_time)
     orders_list = [mt2.check_order_status(order_id) for order_id in order_ids]
     deleted_volumes = mt2.delete_orders(orders_list)
     return orders_list, deleted_volumes
@@ -94,70 +94,40 @@ for order in deleted_volumes:
         allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Exit Units'] = volume_filled
 _, opening_orders = mt2.get_opening_orders(mt5_symbol, latest_weights)
 filled_orders = mt2.get_filled_orders(mt5_symbol)
-
-if not opening_orders.empty and not filled_orders.empty:
-    # Create new columns for actual values without dropping the original columns
-    entry_orders = filled_orders[filled_orders['type'] == 0]
-    exits_orders = filled_orders[filled_orders['type'] == 1]
-
-    # Group and rename for actual holding units
-    actual_opening_units = opening_orders.groupby('symbol')['volume'].sum().reset_index()
-    actual_opening_units.rename(columns={'volume': 'Actual Holding Units', 'symbol': 'Share Symbol'}, inplace=True)
-
-    # Group and rename for actual entry units
-    actual_entry_units = entry_orders.groupby('symbol')['volume_initial'].sum().reset_index()
-    actual_entry_units.rename(columns={'volume_initial': 'Actual Entry Units', 'symbol': 'Share Symbol'}, inplace=True)
-
-    # Group and rename for actual exit units
-    actual_exit_units = exits_orders.groupby('symbol')['volume_initial'].sum().reset_index()
-    actual_exit_units.rename(columns={'volume_initial': 'Actual Exit Units', 'symbol': 'Share Symbol'}, inplace=True)
-
-    # Group and rename for actual exit prices
-    actual_exit_prices = exits_orders.groupby('symbol')['price_current'].mean().reset_index()
-    actual_exit_prices.rename(columns={'price_current': 'Actual Exit Price', 'symbol': 'Share Symbol'}, inplace=True)
-    if 'Exit Price' not in allocation_df.columns:
-        allocation_df['Exit Price'] = 0.0
-    # Merge the new columns with allocation_df
-    allocation_df = pd.merge(allocation_df, actual_exit_prices, on='Share Symbol', how='left')
-    allocation_df = pd.merge(allocation_df, actual_opening_units, on='Share Symbol', how='left')
-    allocation_df = pd.merge(allocation_df, actual_entry_units, on='Share Symbol', how='left')
-    allocation_df = pd.merge(allocation_df, actual_exit_units, on='Share Symbol', how='left')
-
-    # Fill NaN values with 0 for the new columns
-    allocation_df['Actual Exit Price'].fillna(0, inplace=True)
-    allocation_df['Actual Holding Units'].fillna(0, inplace=True)
-    allocation_df['Actual Entry Units'].fillna(0, inplace=True)
-    allocation_df['Actual Exit Units'].fillna(0, inplace=True)
-
-    # Assuming you still want to update 'Entry Price' and 'Current Price' from opening_orders
-    allocation_df['Entry Price'] = opening_orders['price_open']
-    allocation_df['Current Price'] = opening_orders['price_current']
-    allocation_df['Entry Price'].fillna(0, inplace=True)
-    allocation_df['Current Price'].fillna(0, inplace=True)
+############## testing only
+current_time = datetime.datetime.now()
+# Filter for orders done in the last 5 minutes
+five_minutes_ago = current_time - datetime.timedelta(minutes=1)
+recent_filled_orders = filled_orders[pd.to_datetime(filled_orders['time_done']) >= five_minutes_ago]
+print(recent_filled_orders)
+print(opening_orders)
+############## testing only
+if not opening_orders.empty:
+    print("Opening orders found.")
 else:
-    print("No opening_orders or filled_orders found.")
+    print("No opening orders found.")
 
-log_entry = mt2.generate_daily_log(allocation_df)
+log_df = mt2.create_daily_log(recent_filled_orders, opening_orders) #recent_filled_orders to filled_orders
 start_time = datetime.time(9, 00)
 end_time = datetime.time(14, 40)
-while True:
-    current_time = datetime.datetime.now().time()
-    if start_time <= current_time <= end_time:
-        today_return,_ = mt2.get_opening_orders(mt5_symbol, latest_weights)
-        if today_return <= -Port_TPSL:
-            mt2.close_all_positions(opening_orders, 'Port_SL')
-            break
-        elif today_return >= Port_TPSL:
-            mt2.close_all_positions(opening_orders, 'Port_TP')
-            break
-        else:
-            print("Portfolio within risk limits.")
-        print('Checked, sleeping for 5 seconds...')
-        time.sleep(5) 
-    else:
-        print("Outside monitoring hours.")
-        break
-mt2.save_df_to_csv(log_entry, 
+# while True:
+#     current_time = datetime.datetime.now().time()
+#     if start_time <= current_time <= end_time:
+#         today_return,_ = mt2.get_opening_orders(mt5_symbol, latest_weights)
+#         if today_return <= -Port_TPSL:
+#             mt2.close_all_positions(opening_orders, 'Port_SL')
+#             break
+#         elif today_return >= Port_TPSL:
+#             mt2.close_all_positions(opening_orders, 'Port_TP')
+#             break
+#         else:
+#             print("Portfolio within risk limits.")
+#         print('Checked, sleeping for 5 seconds...')
+#         time.sleep(5) 
+#     else:
+#         print("Outside monitoring hours.")
+#         break
+mt2.save_df_to_csv(log_df, 
                    folder_name='daily_portfolio', 
                    file_name='balance',
                    append=True)
