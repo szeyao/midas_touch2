@@ -9,7 +9,6 @@ import pandas as pd
 import MetaTrader5 as mt5
 import midas_touch2 as mt2
 import stock_mapping as sm
-
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
     print("initialize() failed")
@@ -30,7 +29,8 @@ sleep_time = config['sleep_time']
 account=config['execute_account']
 password=config['password']
 server=config['server']
-VaR = config['VaR']
+Port_TPSL = config['Port_TPSL']
+Magic = config['Magic']
 starting_cash = config['starting_cash']
 authorized=mt5.login(account, password=password, server=server)
 if authorized:
@@ -45,6 +45,7 @@ price_df = pd.DataFrame(price_df)
 price_df.columns = mt5_symbol
 weights_df, latest_weights = mt2.run_portfolio(price_df, alpha_n=5)
 print(f'latest_weights: {latest_weights}')
+latest_weights = mt2.generate_random_series(mt5_symbol)
 #ADD DUMMY WEIGHTS HERE TO TEST
 total_investment = starting_cash
 previous_allocation_df = mt2.get_folder(folder_name='daily_allocation')
@@ -69,15 +70,20 @@ allocation_df['Exit Units'] = allocation_df.apply(
 numeric_cols = allocation_df.select_dtypes(include=['number']).astype(float)
 for col in numeric_cols.columns:
     allocation_df[col] = numeric_cols[col]
-print(allocation_df)
-
+#print(f'first allocation: {allocation_df}')
+# LIMIT
 async def execute_and_check_trades(allocation_df, time):
     order_ids = mt2.execute_trades_from_data(allocation_df)
-    await asyncio.sleep(time)  # Asynchronous sleep
+    await asyncio.sleep(time)
     orders_list = [mt2.check_order_status(order_id) for order_id in order_ids]
     deleted_volumes = mt2.delete_orders(orders_list)
     return orders_list, deleted_volumes
 orders_list, deleted_volumes = asyncio.run(execute_and_check_trades(allocation_df, sleep_time))
+
+# TWAP
+# order_ids = mt2.execute_trades_from_data(allocation_df)
+# orders_list = [mt2.check_order_status(order_id) for order_id in order_ids]
+# deleted_volumes = mt2.delete_orders(orders_list)
 
 for order in deleted_volumes:
     symbol = order['symbol']
@@ -86,39 +92,64 @@ for order in deleted_volumes:
         allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Entry Units'] = volume_filled
     else: 
         allocation_df.loc[allocation_df['Share Symbol'] == symbol, 'Exit Units'] = volume_filled
+_, opening_orders = mt2.get_opening_orders(mt5_symbol, latest_weights)
+filled_orders = mt2.get_filled_orders(mt5_symbol)
 
-entry_unit = allocation_df['Entry Units']
-exit_unit = allocation_df['Exit Units']
-share_price = allocation_df['Share Price']
-allocated_unit = allocation_df['Allocated Units']
-if previous_allocation_df is not None and previous_portfolio_df is not None: #2nd run onwards
-    starting_cash = previous_portfolio_df['Cash Value'].iloc[-1]
-    current_share_value = ((entry_unit*share_price)-(exit_unit*share_price)).sum()
-    current_share_value += previous_portfolio_df['Portfolio Value'].iloc[-1]
-else: #first run
-    starting_cash = total_investment
-    current_share_value = (entry_unit*share_price).sum()
+if not opening_orders.empty and not filled_orders.empty:
+    # Create new columns for actual values without dropping the original columns
+    entry_orders = filled_orders[filled_orders['type'] == 0]
+    exits_orders = filled_orders[filled_orders['type'] == 1]
 
-portfolio_df = mt2.compile_portfolio_data(allocation_df, starting_cash, current_share_value)
-mt2.save_df_to_csv(portfolio_df, 
-                   folder_name='daily_portfolio', 
-                   file_name='balance',
-                   append=True)
-mt2.save_df_to_csv(allocation_df, 
-                   folder_name='daily_allocation', 
-                   file_name='allocation')
+    # Group and rename for actual holding units
+    actual_opening_units = opening_orders.groupby('symbol')['volume'].sum().reset_index()
+    actual_opening_units.rename(columns={'volume': 'Actual Holding Units', 'symbol': 'Share Symbol'}, inplace=True)
 
+    # Group and rename for actual entry units
+    actual_entry_units = entry_orders.groupby('symbol')['volume_initial'].sum().reset_index()
+    actual_entry_units.rename(columns={'volume_initial': 'Actual Entry Units', 'symbol': 'Share Symbol'}, inplace=True)
+
+    # Group and rename for actual exit units
+    actual_exit_units = exits_orders.groupby('symbol')['volume_initial'].sum().reset_index()
+    actual_exit_units.rename(columns={'volume_initial': 'Actual Exit Units', 'symbol': 'Share Symbol'}, inplace=True)
+
+    # Group and rename for actual exit prices
+    actual_exit_prices = exits_orders.groupby('symbol')['price_current'].mean().reset_index()
+    actual_exit_prices.rename(columns={'price_current': 'Actual Exit Price', 'symbol': 'Share Symbol'}, inplace=True)
+    if 'Exit Price' not in allocation_df.columns:
+        allocation_df['Exit Price'] = 0.0
+    # Merge the new columns with allocation_df
+    allocation_df = pd.merge(allocation_df, actual_exit_prices, on='Share Symbol', how='left')
+    allocation_df = pd.merge(allocation_df, actual_opening_units, on='Share Symbol', how='left')
+    allocation_df = pd.merge(allocation_df, actual_entry_units, on='Share Symbol', how='left')
+    allocation_df = pd.merge(allocation_df, actual_exit_units, on='Share Symbol', how='left')
+
+    # Fill NaN values with 0 for the new columns
+    allocation_df['Actual Exit Price'].fillna(0, inplace=True)
+    allocation_df['Actual Holding Units'].fillna(0, inplace=True)
+    allocation_df['Actual Entry Units'].fillna(0, inplace=True)
+    allocation_df['Actual Exit Units'].fillna(0, inplace=True)
+
+    # Assuming you still want to update 'Entry Price' and 'Current Price' from opening_orders
+    allocation_df['Entry Price'] = opening_orders['price_open']
+    allocation_df['Current Price'] = opening_orders['price_current']
+    allocation_df['Entry Price'].fillna(0, inplace=True)
+    allocation_df['Current Price'].fillna(0, inplace=True)
+else:
+    print("No opening_orders or filled_orders found.")
+
+log_entry = mt2.generate_daily_log(allocation_df)
 start_time = datetime.time(9, 00)
-end_time = datetime.time(16, 40)
+end_time = datetime.time(14, 40)
 while True:
     current_time = datetime.datetime.now().time()
     if start_time <= current_time <= end_time:
-        total_portfolio_change_position = mt2.monitor_portfolio(mt5_symbol, latest_weights)
-        today_return = total_portfolio_change_position
-        if today_return <= -VaR:
-            print("Stop loss!!!")
-        elif today_return >= VaR:
-            print("Take profit!!!")
+        today_return,_ = mt2.get_opening_orders(mt5_symbol, latest_weights)
+        if today_return <= -Port_TPSL:
+            mt2.close_all_positions(opening_orders, 'Port_SL')
+            break
+        elif today_return >= Port_TPSL:
+            mt2.close_all_positions(opening_orders, 'Port_TP')
+            break
         else:
             print("Portfolio within risk limits.")
         print('Checked, sleeping for 5 seconds...')
@@ -126,3 +157,10 @@ while True:
     else:
         print("Outside monitoring hours.")
         break
+mt2.save_df_to_csv(log_entry, 
+                   folder_name='daily_portfolio', 
+                   file_name='balance',
+                   append=True)
+mt2.save_df_to_csv(allocation_df,
+                     folder_name='daily_allocation', 
+                     file_name='allocation')

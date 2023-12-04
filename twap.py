@@ -3,6 +3,8 @@ import math
 import time
 import random
 import sys
+if not mt5.initialize():
+        print("MT5 initialize() failed")
 
 # def TWAPStrategy1(symbol, action, execPeriod, execUnits, targetTWAP, slippage, qtyRatio, orderInterval, randMin = 0.5, randMax = 1.5, magic = 0, comment = ""):
 #     if randMin < 0.0 or randMax < 0.0:
@@ -56,6 +58,8 @@ def TWAPStrategy2(symbol, action, execPeriod, execMode, execUnits, targetTWAP, s
     bal = execUnits
     startTime = time.time()
     mt5.market_book_add(symbol)
+    tryget = mt5.market_book_get(symbol)
+    print(tryget)
     while bal > 0.0 and time.time() <= startTime + execPeriod:
         depthMT5 = mt5.market_book_get(symbol)
         depth = {"Offer": [], "Bid": []}
