@@ -1,7 +1,7 @@
 {
     "symbols": ["1082.KL","1295.KL","5306.KL","1155.KL","5202.KL","5168.KL"],  
     "api_token": "x",
-    "mapping_file_path" : "C:/Users/jeffnsy/Desktop/Python codes/midas_touch2/stock_mapping.xlsx",
+    "mapping_file_path" : "C:/Users/kkyao/midas_touch2/stock_mapping.xlsx",
     "sleep_time": 130,
     "execute_account": 2117,
     "password": "kenanga2117",
