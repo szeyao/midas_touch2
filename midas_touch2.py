@@ -10,19 +10,20 @@ import MetaTrader5 as mt5
 import stock_mapping as sm
 from urllib import request
 from datetime import datetime, timedelta
+import shutil
+import glob
 
-
-
-def tick_rule(price):
-    price = int(price)
-    if price < int(1):
-        return 0.005
-    elif price >= int(1) and price < int(10):
-        return 0.01
-    elif price >= int(10) and price < int(100):
-        return 0.02
+def delete_folders_if_df_empty(df, folder_name_criteria):
+    current_dir = os.getcwd()
+    all_folders = [f for f in glob.glob(os.path.join(current_dir, '*')) if os.path.isdir(f)]
+    folders_to_delete = [folder for folder in all_folders if any(criterion in folder for criterion in folder_name_criteria)]
+    if df.empty:
+        print("The DataFrame is empty. Deleting matched folders...")
+        for folder_path in folders_to_delete:
+            shutil.rmtree(folder_path)
+            print(f"Deleted folder: {folder_path}")
     else:
-        return 0.1
+        print("The DataFrame is not empty. No folders were deleted.")
     
 def get_account_balance():
     if not mt5.initialize():
@@ -122,23 +123,6 @@ def calculate_stock_allocation(total_investment, weights_series, price_df, min_o
     })
     return allocation_df
 
-def compile_portfolio_data(allocation_df, starting_cash, current_share_value):
-    purchase_cost = (allocation_df['Share Price'] * allocation_df['Entry Units']).sum()
-    sale_proceed = (allocation_df['Share Price'] * allocation_df['Exit Units']).sum()
-    cash_value = starting_cash - purchase_cost + sale_proceed
-    portfolio_value = current_share_value
-    total_value = portfolio_value + cash_value  # adjusted to account for the initial capital
-    portfolio_data = {
-        'Starting Capital': [starting_cash],
-        'Purchase Cost': [purchase_cost],
-        'Sale Proceed': [sale_proceed],
-        'Cash Value': [cash_value],
-        'Portfolio Value': [portfolio_value],
-        'Total Value': [total_value]
-    }
-    portfolio_df = pd.DataFrame(portfolio_data)
-    return portfolio_df
-
 def find_latest_csv(folder_path):
     if not os.path.exists(folder_path):
         print(f"Folder not found: {folder_path}")
@@ -165,25 +149,6 @@ def get_folder(folder_name='daily_allocation'):
         return pd.read_csv(latest_csv_path)
     else:
         return None
-
-def get_open_positions(ticker):
-    positions = mt5.positions_get(symbol=ticker)
-    if positions is None or len(positions) == 0:
-        print('No open positions for', ticker)
-        return 0, 0
-    else:
-        positions_dict = positions[0]._asdict()
-        holding_vol = positions_dict['volume']
-        holding_price = positions_dict['price_open']
-        return holding_vol, holding_price
-
-def round_to_tick(price):
-    tick = tick_rule(price)
-    tick_decimal_point = len(str(tick).split('.')[1])
-    n_ticks = price / tick
-    rounded_ticks = math.ceil(n_ticks)
-    rounded_price = round(rounded_ticks * tick, tick_decimal_point)
-    return rounded_price
 
 ##########################################TWAP execution#############################################
 # def place_order(row, comment="kkyao2"):
@@ -366,31 +331,6 @@ def generate_random_series(tickers, seed=None):
     return pd.Series(normalized_values, index=tickers)
 # latest_weights = mt2.generate_random_series(mt5_symbol)
 #########################################################################
-def monitor_portfolio(stock_symbols, weights):
-    all_positions = []
-    
-    for symbol in stock_symbols:
-        positions = mt5.positions_get(symbol=symbol)
-        if positions is None:
-            print(f"No positions for {symbol}, error code={mt5.last_error()}")
-        elif len(positions) > 0:
-            all_positions.extend(list(positions))
-    if all_positions:
-        df = pd.DataFrame(all_positions, columns=all_positions[0]._asdict().keys())
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df = df.drop(['time_msc', 'time_update', 'time_update_msc', 'identifier', 'reason', 
-                      'sl', 'tp', 'swap', 'comment', 'external_id'], axis=1)
-        df['position_change'] = (df['price_current'] / df['price_open']) - 1
-        df['value'] = df['volume'] * df['price_open']
-        df['weights'] = df['symbol'].map(weights)
-        df['portfolio_change_position'] = df['weights'] * df['position_change']
-        #print(df)
-    else:
-        print("No open positions for any of the specified symbols.")
-    total_portfolio_change_position = df['portfolio_change_position'].sum()
-    print(f"Total portfolio change position: {total_portfolio_change_position:.4%}")
-    return total_portfolio_change_position
-
 def get_opening_orders(stock_symbols, weights):
     if not mt5.initialize():
         print("initialize() failed, error code =", mt5.last_error())
@@ -439,10 +379,11 @@ def get_filled_orders(symbol_list, magic = 4444):
     df['time_done'] = pd.to_datetime(df['time_done'], unit='s')
     # Drop columns
     df = df.drop(['time_setup', 'time_done_msc', 'time_setup_msc', 'time_expiration', 'sl',
-                  'type_time', 'type_filling', 'volume_current', 'reason', 'price_open', 'tp',
+                  'type_time', 'type_filling', 'reason', 'price_open', 'tp',
                   'position_id', 'position_by_id', 'external_id', 'price_stoplimit'], axis=1)
     df = df.drop_duplicates()
-    filled_orders = df[df['state'] == 4]
+    df['volume_filled'] = df['volume_initial'] - df['volume_current']
+    filled_orders = df[(df['state'] == 4) | (df['state'] == 2)]
     #filled_orders = df[df['magic'] == magic]
     filled_orders = filled_orders[filled_orders['symbol'].isin(symbol_list)]
     return filled_orders
@@ -457,13 +398,13 @@ def create_daily_log(filled_orders, opening_df, starting_cash=10000, log_folder=
     cash_balance = initial_capital
     # Calculate purchase cost
     buy_order = filled_orders[filled_orders['type'] == 2]
-    purchase_cost = (buy_order['price_current'] * buy_order['volume_initial']).sum()
+    purchase_cost = (buy_order['price_current'] * buy_order['volume_filled']).sum()
     cash_balance -= purchase_cost
     # Calculate portfolio value
     portfolio_value = (opening_df['price_current'] * opening_df['volume']).sum()
     # Calculate sales proceeds
     sell_order = filled_orders[filled_orders['type'] == 3]
-    sales_proceed = (sell_order['price_current'] * sell_order['volume_initial']).sum()
+    sales_proceed = (sell_order['price_current'] * sell_order['volume_filled']).sum()
     cash_balance += sales_proceed
     # Total value
     total_value = cash_balance + portfolio_value
@@ -490,11 +431,11 @@ def close_all_positions(df, comment):
             continue
         current_bid = symbol_info.bid
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
             "volume": volume,
-            "type": mt5.ORDER_TYPE_SELL,
-            "price": current_bid,
+            "type": mt5.ORDER_TYPE_SELL_LIMIT,
+            "price": current_bid-0.02,
             "deviation": 20,  # Deviation in points
             "magic": 20231207,       # Magic number, if needed
             "comment": comment,

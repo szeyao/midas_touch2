@@ -9,7 +9,6 @@ import pandas as pd
 import MetaTrader5 as mt5
 import midas_touch2 as mt2
 import stock_mapping as sm
-
 warnings.filterwarnings('ignore')
 if not mt5.initialize():
     print("initialize() failed")
@@ -45,10 +44,16 @@ price_df = mt2.download_stocks(symbols, "d", api_token, num_days=20)
 price_df = pd.DataFrame(price_df)
 price_df.columns = mt5_symbol
 weights_df, latest_weights = mt2.run_portfolio(price_df, alpha_n=5)
-print(f'latest_weights: {latest_weights}')
+
 latest_weights = mt2.generate_random_series(mt5_symbol)
 #ADD DUMMY WEIGHTS HERE TO TEST
+print(f'latest_weights: {latest_weights}')
 total_investment = starting_cash
+
+_, odf_check = mt2.get_opening_orders(mt5_symbol, latest_weights)
+folder_name_criteria = ['daily_allocation', 'daily_portfolio']
+mt2.delete_folders_if_df_empty(odf_check, folder_name_criteria)
+
 previous_allocation_df = mt2.get_folder(folder_name='daily_allocation')
 previous_portfolio_df = mt2.get_folder(folder_name='daily_portfolio')
 if previous_allocation_df is not None and previous_portfolio_df is not None:
@@ -97,10 +102,10 @@ filled_orders = mt2.get_filled_orders(mt5_symbol)
 ############## testing only
 current_time = datetime.datetime.now()
 # Filter for orders done in the last 5 minutes
-five_minutes_ago = current_time - datetime.timedelta(minutes=1)
+five_minutes_ago = current_time - datetime.timedelta(minutes=2)
 recent_filled_orders = filled_orders[pd.to_datetime(filled_orders['time_done']) >= five_minutes_ago]
-print(recent_filled_orders)
-print(opening_orders)
+print(f'recent_filled_orders: {recent_filled_orders}')
+print(f'opening_orders: {opening_orders}')
 ############## testing only
 if not opening_orders.empty:
     print("Opening orders found.")
@@ -109,24 +114,24 @@ else:
 
 log_df = mt2.create_daily_log(recent_filled_orders, opening_orders) #recent_filled_orders to filled_orders
 start_time = datetime.time(9, 00)
-end_time = datetime.time(14, 40)
-# while True:
-#     current_time = datetime.datetime.now().time()
-#     if start_time <= current_time <= end_time:
-#         today_return,_ = mt2.get_opening_orders(mt5_symbol, latest_weights)
-#         if today_return <= -Port_TPSL:
-#             mt2.close_all_positions(opening_orders, 'Port_SL')
-#             break
-#         elif today_return >= Port_TPSL:
-#             mt2.close_all_positions(opening_orders, 'Port_TP')
-#             break
-#         else:
-#             print("Portfolio within risk limits.")
-#         print('Checked, sleeping for 5 seconds...')
-#         time.sleep(5) 
-#     else:
-#         print("Outside monitoring hours.")
-#         break
+end_time = datetime.time(16, 40) #16:40
+while True:
+    current_time = datetime.datetime.now().time()
+    if start_time <= current_time <= end_time:
+        today_return,_ = mt2.get_opening_orders(mt5_symbol, latest_weights)
+        if today_return <= -Port_TPSL:
+            mt2.close_all_positions(opening_orders, 'Port_SL')
+            break
+        elif today_return >= Port_TPSL:
+            mt2.close_all_positions(opening_orders, 'Port_TP')
+            break
+        else:
+            print("Portfolio within risk limits.")
+        print('Checked, sleeping for 5 seconds...')
+        time.sleep(5) 
+    else:
+        print("Outside monitoring hours.")
+        break
 mt2.save_df_to_csv(log_df, 
                    folder_name='daily_portfolio', 
                    file_name='balance',
