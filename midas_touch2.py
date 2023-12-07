@@ -14,8 +14,8 @@ import shutil
 import glob
 
 def delete_folders_if_df_empty(df, folder_name_criteria):
-    current_dir = os.getcwd()
-    all_folders = [f for f in glob.glob(os.path.join(current_dir, '*')) if os.path.isdir(f)]
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    all_folders = [f for f in glob.glob(os.path.join(script_dir, '*')) if os.path.isdir(f)]
     folders_to_delete = [folder for folder in all_folders if any(criterion in folder for criterion in folder_name_criteria)]
     if df.empty:
         print("The DataFrame is empty. Deleting matched folders...")
@@ -26,9 +26,6 @@ def delete_folders_if_df_empty(df, folder_name_criteria):
         print("The DataFrame is not empty. No folders were deleted.")
     
 def get_account_balance():
-    if not mt5.initialize():
-        print("initialize() failed, error code =", mt5.last_error())
-        return None
     account_info = mt5.account_info()
     if account_info is None:
         print("Failed to get account information.")
@@ -123,7 +120,9 @@ def calculate_stock_allocation(total_investment, weights_series, price_df, min_o
     })
     return allocation_df
 
-def find_latest_csv(folder_path):
+def find_latest_csv(folder_name):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    folder_path = os.path.join(script_dir, folder_name)
     if not os.path.exists(folder_path):
         print(f"Folder not found: {folder_path}")
         return None
@@ -151,7 +150,7 @@ def get_folder(folder_name='daily_allocation'):
         return None
 
 ##########################################TWAP execution#############################################
-# def place_order(row, comment="kkyao2"):
+# def place_order(row, comment="kkyao1"):
 #     symbol = row['Share Symbol']
 #     price = row['Share Price']
 #     entry_units = row['Entry Units']
@@ -200,9 +199,6 @@ def get_folder(folder_name='daily_allocation'):
 
 ##########################################LIMIT execution#############################################
 def execute_mt5_order(symbol, execute_price, order_type, volume, sl, tp, deviation,magic_number=8888,comment_msg='say something'):
-    if not mt5.initialize():
-        print("initialize() failed, error code =", mt5.last_error())
-        return
     if not mt5.symbol_select(symbol, True):
         print("symbol_select() failed, symbol not found in market watch:", symbol)
         return
@@ -251,8 +247,8 @@ def execute_trades_from_data(allocation_df):
                                        volume=entry_units, 
                                        sl=0.0, tp=0.0, 
                                        deviation=10, 
-                                       magic_number=1116, 
-                                       comment_msg='kkyao2 Entry')
+                                       magic_number=20231207, 
+                                       comment_msg='kkyao1 Entry')
             if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
                 order_ids.append(result.order)
         if exit_units > 0:
@@ -263,8 +259,8 @@ def execute_trades_from_data(allocation_df):
                                        volume=exit_units,
                                        sl=0.0, tp=0.0, 
                                        deviation=10, 
-                                       magic_number=1116,
-                                       comment_msg='kkyao2 Exit')
+                                       magic_number=20231207,
+                                       comment_msg='kkyao1 Exit')
             if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
                 order_ids.append(result.order)
     return order_ids
@@ -332,9 +328,6 @@ def generate_random_series(tickers, seed=None):
 # latest_weights = mt2.generate_random_series(mt5_symbol)
 #########################################################################
 def get_opening_orders(stock_symbols, weights):
-    if not mt5.initialize():
-        print("initialize() failed, error code =", mt5.last_error())
-        return None, pd.DataFrame()  # Return an empty DataFrame if MT5 fails to initialize
     all_positions = []
     open_prices = {}
     for symbol in stock_symbols:
@@ -379,7 +372,7 @@ def get_filled_orders(symbol_list, magic = 4444):
     df['time_done'] = pd.to_datetime(df['time_done'], unit='s')
     # Drop columns
     df = df.drop(['time_setup', 'time_done_msc', 'time_setup_msc', 'time_expiration', 'sl',
-                  'type_time', 'type_filling', 'reason', 'price_open', 'tp',
+                  'type_time', 'type_filling', 'reason', 'tp',
                   'position_id', 'position_by_id', 'external_id', 'price_stoplimit'], axis=1)
     df = df.drop_duplicates()
     df['volume_filled'] = df['volume_initial'] - df['volume_current']
@@ -389,8 +382,10 @@ def get_filled_orders(symbol_list, magic = 4444):
     return filled_orders
     
 def create_daily_log(filled_orders, opening_df, starting_cash=10000, log_folder="daily_portfolio", log_file_name="balance.csv"):
-    log_file_path = os.path.join(log_folder, log_file_name)
-    if os.path.exists(log_folder) and os.path.isfile(log_file_path):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_folder_path = os.path.join(script_dir, log_folder)
+    log_file_path = os.path.join(log_folder_path, log_file_name)
+    if os.path.exists(log_folder_path) and os.path.isfile(log_file_path):
         previous_log = pd.read_csv(log_file_path)
         initial_capital = previous_log.iloc[-1]['Cash Balance']
     else:
@@ -398,13 +393,13 @@ def create_daily_log(filled_orders, opening_df, starting_cash=10000, log_folder=
     cash_balance = initial_capital
     # Calculate purchase cost
     buy_order = filled_orders[filled_orders['type'] == 2]
-    purchase_cost = (buy_order['price_current'] * buy_order['volume_filled']).sum()
+    purchase_cost = (buy_order['price_open'] * buy_order['volume_filled']).sum()
     cash_balance -= purchase_cost
     # Calculate portfolio value
     portfolio_value = (opening_df['price_current'] * opening_df['volume']).sum()
     # Calculate sales proceeds
     sell_order = filled_orders[filled_orders['type'] == 3]
-    sales_proceed = (sell_order['price_current'] * sell_order['volume_filled']).sum()
+    sales_proceed = (sell_order['price_open'] * sell_order['volume_filled']).sum()
     cash_balance += sales_proceed
     # Total value
     total_value = cash_balance + portfolio_value
