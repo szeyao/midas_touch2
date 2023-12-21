@@ -203,19 +203,19 @@ def execute_mt5_order(symbol, execute_price, order_type, volume, sl, tp, deviati
         print("symbol_select() failed, symbol not found in market watch:", symbol)
         return
     order_type_dict = {
-        'buy': mt5.ORDER_TYPE_BUY_LIMIT,
-        'sell': mt5.ORDER_TYPE_SELL_LIMIT
+        'buy': mt5.ORDER_TYPE_BUY, # mt5.ORDER_TYPE_BUY_LIMIT
+        'sell': mt5.ORDER_TYPE_SELL # mt5.ORDER_TYPE_SELL_LIMIT
     }
     if order_type.lower() not in order_type_dict:
         print(f"Order type '{order_type}' is not supported.")
         return
 
     request = {
-        "action": mt5.TRADE_ACTION_PENDING,
+        "action": mt5.TRADE_ACTION_DEAL,#mt5.TRADE_ACTION_PENDING,
         "symbol": symbol,
         "volume": volume,
         "type": order_type_dict[order_type.lower()],
-        "price": execute_price,
+        #"price": execute_price, #limit order ONLY
         "sl": sl,
         "tp": tp,
         "deviation": deviation,
@@ -345,7 +345,8 @@ def get_opening_orders(stock_symbols, weights):
         df = df.drop(['time_msc', 'time_update', 'time_update_msc', 'identifier', 'reason', 
                       'sl', 'tp', 'swap', 'comment', 'external_id'], axis=1)
         df['position_change'] = (df['price_current'] / df['price_open']) - 1
-        df['value'] = df['volume'] * df['price_open']
+        df['open_value'] = df['volume'] * df['price_open']
+        df['curr_value'] = df['volume'] * df['price_current']
         df['weights'] = df['symbol'].map(weights)
         df['portfolio_change_position'] = df['weights'] * df['position_change']
     total_portfolio_change_position = df['portfolio_change_position'].sum() if not df.empty else 0
@@ -392,13 +393,14 @@ def create_daily_log(filled_orders, opening_df, starting_cash=10000, log_folder=
         initial_capital = starting_cash
     cash_balance = initial_capital
     # Calculate purchase cost
-    buy_order = filled_orders[filled_orders['type'] == 2]
-    purchase_cost = (buy_order['price_open'] * buy_order['volume_filled']).sum()
+    buy_order = filled_orders[filled_orders['type'] == 0] #==2 if limit buy
+    #price_open if limit buy
+    purchase_cost = (buy_order['price_current'] * buy_order['volume_filled']).sum()
     cash_balance -= purchase_cost
     # Calculate portfolio value
     portfolio_value = (opening_df['price_current'] * opening_df['volume']).sum()
     # Calculate sales proceeds
-    sell_order = filled_orders[filled_orders['type'] == 3]
+    sell_order = filled_orders[filled_orders['type'] == 1] #==3 if limit sell
     sales_proceed = (sell_order['price_open'] * sell_order['volume_filled']).sum()
     cash_balance += sales_proceed
     # Total value

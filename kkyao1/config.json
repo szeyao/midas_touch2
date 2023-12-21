@@ -1,10 +1,10 @@
 {
     "symbols": ["3158.KL","1015.KL","1295.KL","3816.KL","7052.KL","7084.KL","7293.KL"],  
     "api_token": "65090d11a67b45.83965572",
-    "mapping_file_path" : "C:/Users/QUANT-ELITE10PC6/kkyao_portfolio/kkyao1/stock_mapping.xlsx",
-    "sleep_time": 7200,
-    "execute_account": 2097,
-    "password": "kenanga2097",
+    "mapping_file_path" : "C:/Users/jeffnsy/Desktop/Python codes/midas_touch2/kkyao1/stock_mapping.xlsx",
+    "sleep_time": 30,
+    "execute_account": 2117,
+    "password": "kenanga2117",
     "server": "172.21.139.37:443",
     "starting_cash": 25000,
     "Port_TPSL": 0.03

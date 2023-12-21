@@ -45,7 +45,7 @@ price_df = pd.DataFrame(price_df)
 price_df.columns = mt5_symbol
 weights_df, latest_weights = mt2.run_portfolio(price_df, alpha_n=5)
 
-#latest_weights = mt2.generate_random_series(mt5_symbol)
+latest_weights = mt2.generate_random_series(mt5_symbol)
 #ADD DUMMY WEIGHTS HERE TO TEST
 print(f'latest_weights: {latest_weights}')
 total_investment = starting_cash
@@ -54,7 +54,7 @@ _, odf_check = mt2.get_opening_orders(mt5_symbol, latest_weights)
 folder_name_criteria = ['daily_allocation', 'daily_portfolio']
 mt2.delete_folders_if_df_empty(odf_check, folder_name_criteria)
 if not odf_check.empty:
-    current_portfolio_value = odf_check.value.sum()
+    current_portfolio_value = odf_check.curr_value.sum()
 
 previous_allocation_df = mt2.get_folder(folder_name='daily_allocation')
 previous_portfolio_df = mt2.get_folder(folder_name='daily_portfolio')
@@ -64,7 +64,7 @@ if previous_allocation_df is not None and previous_portfolio_df is not None:
     prev_entry = previous_allocation_df['Entry Units']
     prev_exit = previous_allocation_df['Exit Units']
     total_investment = abs(previous_portfolio_df['Cash Balance'].iloc[-1] + current_portfolio_value)
-    print(f'total_investment: {total_investment}')
+    print(f'Not initial run. Total_investment: {total_investment}')
     allocation_df = mt2.calculate_stock_allocation(total_investment, latest_weights, price_df)
     allocation_df['Holding Units'] = prev_holding + prev_entry - prev_exit
 else: #first run
@@ -106,7 +106,7 @@ filled_orders = mt2.get_filled_orders(mt5_symbol)
 ############## testing only
 current_time = datetime.datetime.now()
 # Filter for orders done in the last 5 minutes
-five_minutes_ago = current_time - datetime.timedelta(minutes=120)#60*2)
+five_minutes_ago = current_time - datetime.timedelta(minutes=2)#60*2)
 recent_filled_orders = filled_orders[pd.to_datetime(filled_orders['time_done']) >= five_minutes_ago]
 print(f'recent_filled_orders: {recent_filled_orders}')
 print(f'opening_orders: {opening_orders}')
@@ -117,8 +117,9 @@ else:
     print("No opening orders found.")
 
 log_df = mt2.create_daily_log(recent_filled_orders, opening_orders,starting_cash=starting_cash) #recent_filled_orders to filled_orders
+log_df['Total Investment'] = total_investment
 start_time = datetime.time(9, 00)
-end_time = datetime.time(16, 40) #16:40
+end_time = (current_time + datetime.timedelta(minutes=1)).time()#datetime.time(16, 40) #16:40
 while True:
     current_time = datetime.datetime.now().time()
     if start_time <= current_time <= end_time:
@@ -136,10 +137,12 @@ while True:
     else:
         print("Outside monitoring hours.")
         break
+print(log_df)
 mt2.save_df_to_csv(log_df, 
                    folder_name='kkyao1/daily_portfolio', 
                    file_name='balance',
                    append=True)
+print(allocation_df)
 mt2.save_df_to_csv(allocation_df,
                      folder_name='kkyao1/daily_allocation', 
                      file_name='allocation')
